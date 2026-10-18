@@ -39,7 +39,7 @@ impl<R: Runtime> HotUpdateAssets<R> {
     /// and the bundle contains the file.
     fn ota_file(&self, key: &AssetKey) -> Option<PathBuf> {
         let dir = self.shared.active_dir()?;
-        let path = safe_join(dir, key.as_ref())?;
+        let path = safe_join(&dir, key.as_ref())?;
         path.is_file().then_some(path)
     }
 }

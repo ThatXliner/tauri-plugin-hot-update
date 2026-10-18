@@ -4,6 +4,7 @@ const COMMANDS: &[&str] = &[
     "notify_app_ready",
     "current_bundle",
     "reset",
+    "apply",
 ];
 
 fn main() {

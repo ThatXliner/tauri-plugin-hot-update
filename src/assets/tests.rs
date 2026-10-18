@@ -87,7 +87,7 @@ fn activate_bundle(root: &Path, files: &[(&str, &str)]) -> Arc<Shared> {
         root.to_path_buf(),
         Version::parse("1.0.0").unwrap(),
     );
-    assert_eq!(shared.active_dir(), Some(&store.bundle_dir(1)));
+    assert_eq!(shared.active_dir(), Some(store.bundle_dir(1)));
     shared
 }
 

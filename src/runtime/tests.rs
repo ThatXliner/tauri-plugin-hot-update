@@ -85,7 +85,7 @@ fn full_trial_cycle_arms_persists_then_commits() {
     // Cold launch: the arm must already be on disk when initialize returns —
     // i.e. before the provider could serve a single byte.
     let (shared, hot_update) = boot(&root, "1.0.0");
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
     let raw = raw_state(&root);
     assert_eq!(raw["booting"], 1, "arm persisted before serving");
     assert_eq!(raw["staged"], serde_json::Value::Null);
@@ -107,7 +107,7 @@ fn full_trial_cycle_arms_persists_then_commits() {
 
     // Steady state on the next launch: committed serving, idempotent ack.
     let (shared, hot_update) = boot(&root, "1.0.0");
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
     assert_eq!(
         hot_update.notify_app_ready().unwrap(),
         AckOutcome::AlreadyCommitted(1)
@@ -124,14 +124,14 @@ fn unacked_trial_rolls_back_blacklists_and_deletes_the_bundle() {
     stage_bundle(&root, 1, "1.1.0", "sha-1");
 
     let (shared, _) = boot(&root, "1.0.0"); // trial boot, crash: no ack
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
 
     // Two-strike softening (design §4): the first unacked relaunch re-arms the
     // same bundle instead of blacklisting it (desktop quits happen before ack).
     let (shared, _) = boot(&root, "1.0.0");
     assert_eq!(
         shared.active_dir(),
-        Some(&bundle_dir(&root, 1)),
+        Some(bundle_dir(&root, 1)),
         "re-armed, still serving"
     );
     assert!(
@@ -167,11 +167,11 @@ fn crash_loop_converges_to_the_committed_bundle_on_disk() {
     for (seq, version, sha) in [(2u64, "1.2.0", "sha-2"), (3, "1.3.0", "sha-3")] {
         stage_bundle(&root, seq, version, sha);
         let (shared, _) = boot(&root, "1.0.0"); // trial boot, no ack
-        assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, seq)));
+        assert_eq!(shared.active_dir(), Some(bundle_dir(&root, seq)));
         let (shared, _) = boot(&root, "1.0.0"); // first unacked relaunch: re-armed
-        assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, seq)));
+        assert_eq!(shared.active_dir(), Some(bundle_dir(&root, seq)));
         let (shared, _) = boot(&root, "1.0.0"); // second unacked relaunch: rollback
-        assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+        assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
     }
 
     let raw = raw_state(&root);
@@ -191,7 +191,7 @@ fn download_landing_mid_trial_stays_staged_while_the_trial_commits() {
     stage_bundle(&root, 1, "1.1.0", "sha-1");
 
     let (shared, hot_update) = boot(&root, "1.0.0"); // trial boot of seq 1
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
     stage_bundle(&root, 2, "1.2.0", "sha-2"); // download finishes mid-session
 
     assert_eq!(
@@ -204,7 +204,7 @@ fn download_landing_mid_trial_stays_staged_while_the_trial_commits() {
 
     // Next launch: seq 2 gets its own trial; committing it replaces seq 1.
     let (shared, hot_update) = boot(&root, "1.0.0");
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 2)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 2)));
     assert_eq!(
         hot_update.notify_app_ready().unwrap(),
         AckOutcome::Committed(2)
@@ -305,7 +305,7 @@ fn unpersistable_arm_serves_last_good_instead_of_the_staged_bundle() {
 
     // A trial boot without a persisted rollback marker could evade rollback
     // detection — so seq 2 must NOT be served; last-good (seq 1) is.
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
     let raw = raw_state(&root);
     assert_eq!(
         raw["staged"], 2,
@@ -326,7 +326,7 @@ fn reset_returns_to_factory_and_spares_the_live_bundle_until_next_boot() {
     hot_update.notify_app_ready().unwrap();
 
     let (shared, hot_update) = boot(&root, "1.0.0");
-    assert_eq!(shared.active_dir(), Some(&bundle_dir(&root, 1)));
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
     hot_update.reset().unwrap();
 
     let raw = raw_state(&root);
@@ -372,9 +372,9 @@ fn double_initialization_keeps_the_first_activation() {
 
     let shared = Arc::new(Shared::default());
     initialize(&shared, root.clone(), ver("1.0.0"));
-    let first_active = shared.active_dir().cloned();
+    let first_active = shared.active_dir();
     initialize(&shared, root.clone(), ver("9.9.9"));
-    assert_eq!(shared.active_dir().cloned(), first_active);
+    assert_eq!(shared.active_dir(), first_active);
 }
 
 #[test]
@@ -390,4 +390,131 @@ fn current_bundle_serializes_camel_case_for_the_wp4_api() {
         json,
         serde_json::json!({ "source": "ota", "seq": 1, "version": "1.1.0" })
     );
+}
+
+// -------------------------------------------------------------- apply_staged
+
+#[test]
+fn apply_staged_swaps_serving_in_process_and_survives_the_ack() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    stage_bundle(&root, 1, "1.1.0", "aa");
+    let (shared, hot_update) = boot(&root, "1.0.0");
+    hot_update.notify_app_ready().unwrap();
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
+
+    // A later download stages seq 2 while seq 1 is serving.
+    stage_bundle(&root, 2, "1.2.0", "bb");
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
+
+    let outcome = hot_update.apply_staged().unwrap();
+    assert_eq!(
+        outcome,
+        ApplyOutcome::Applied {
+            seq: 2,
+            version: ver("1.2.0")
+        }
+    );
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 2)));
+    let state = raw_state(&root);
+    assert_eq!(state["booting"], 2, "trial marker persisted");
+    assert!(state["staged"].is_null());
+    assert_eq!(state["committed"], 1, "previous bundle stays as fallback");
+    assert_eq!(hot_update.current_bundle().unwrap().seq, Some(2));
+
+    // The reloaded page acks: the new bundle commits, the old one is GC'd.
+    assert_eq!(
+        hot_update.notify_app_ready().unwrap(),
+        AckOutcome::Committed(2)
+    );
+    assert!(!bundle_dir(&root, 1).exists());
+    assert_eq!(raw_state(&root)["committed"], 2);
+}
+
+#[test]
+fn apply_staged_without_a_staged_bundle_is_a_noop() {
+    let tmp = TempDir::new().unwrap();
+    let (shared, hot_update) = boot(tmp.path(), "1.0.0");
+    assert_eq!(
+        hot_update.apply_staged().unwrap(),
+        ApplyOutcome::NothingStaged
+    );
+    assert_eq!(shared.active_dir(), None);
+}
+
+#[test]
+fn apply_staged_refuses_while_the_running_bundle_is_unacked() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    stage_bundle(&root, 1, "1.1.0", "aa");
+    let (shared, hot_update) = boot(&root, "1.0.0");
+    // seq 1 is booting and has not acked yet.
+    stage_bundle(&root, 2, "1.2.0", "bb");
+    assert_eq!(
+        hot_update.apply_staged().unwrap(),
+        ApplyOutcome::TrialPending
+    );
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
+    assert_eq!(raw_state(&root)["staged"], 2, "still waiting");
+}
+
+#[test]
+fn apply_staged_from_embedded_serves_the_bundle() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    let (shared, hot_update) = boot(&root, "1.0.0");
+    stage_bundle(&root, 1, "1.1.0", "aa");
+    assert_eq!(
+        hot_update.apply_staged().unwrap(),
+        ApplyOutcome::Applied {
+            seq: 1,
+            version: ver("1.1.0")
+        }
+    );
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)));
+}
+
+#[test]
+fn applied_bundle_that_never_acks_follows_the_two_strike_rollback() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    let (_, hot_update) = boot(&root, "1.0.0");
+    stage_bundle(&root, 1, "1.1.0", "aa");
+    hot_update.apply_staged().unwrap();
+    // Process dies before the new page acks; two cold launches follow.
+    let (shared, _) = boot(&root, "1.0.0");
+    assert_eq!(shared.active_dir(), Some(bundle_dir(&root, 1)), "strike 1");
+    let (shared, _) = boot(&root, "1.0.0");
+    assert_eq!(shared.active_dir(), None, "strike 2 rolls back to embedded");
+    assert_eq!(raw_state(&root)["failed"][0], "aa");
+}
+
+#[test]
+fn apply_staged_discards_a_bundle_the_embedded_frontend_has_caught_up_to() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    let (shared, hot_update) = boot(&root, "1.2.0");
+    // Staged by an older shell's pipeline view; not newer than embedded.
+    let store = Store::new(root.clone());
+    let dir = store.bundle_dir(1);
+    fs::create_dir_all(&dir).unwrap();
+    store
+        .update(|mut state| {
+            state.staged = Some(1);
+            state.versions.insert(
+                1,
+                BundleMeta {
+                    version: ver("1.2.0"),
+                    archive_sha256: "aa".into(),
+                },
+            );
+            (state, ())
+        })
+        .unwrap();
+    assert_eq!(
+        hot_update.apply_staged().unwrap(),
+        ApplyOutcome::NotApplicable
+    );
+    assert_eq!(shared.active_dir(), None);
+    assert!(!dir.exists());
 }

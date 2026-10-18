@@ -137,7 +137,7 @@ The config is the **only** update source — JS cannot pass a manifest URL or ke
 { "permissions": ["hot-update:default"] }
 ```
 
-This grants all five commands: `check`, `download`, `notify_app_ready`, `current_bundle`, `reset`.
+This grants all six commands: `check`, `download`, `notify_app_ready`, `current_bundle`, `reset`, `apply`.
 
 ### 4. Drive it from the frontend
 
@@ -181,6 +181,7 @@ await reset();         // wipe OTA state, revert to embedded on next launch
 | `check()` | `CheckOutcome` | Fetch + verify the manifest; report whether an update applies. Never downloads. |
 | `download()` | `DownloadOutcome` | Full pipeline: check → download → verify → extract → stage for next launch. |
 | `notifyAppReady()` | `AckOutcome` | Commit the booted bundle as last-known-good. Call once per launch. |
+| `apply()` | `ApplyOutcome` | Switch to the staged bundle in-process (0.2.0+); reload the webview right after `applied`. Without it, a staged bundle waits for the next cold launch. |
 | `currentBundle()` | `CurrentBundle` | What is being served right now (`ota` vs `embedded`, seq, version). |
 | `reset()` | `void` | Wipe all OTA state; next launch reverts to embedded. Debug/support hatch. |
 | `onDownloadProgress(fn)` | `UnlistenFn` | Throttled byte-progress events during `download()`. |

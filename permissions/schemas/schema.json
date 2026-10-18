@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the apply command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-apply",
+          "markdownDescription": "Enables the apply command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the apply command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-apply",
+          "markdownDescription": "Denies the apply command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check",
@@ -355,10 +367,10 @@
           "markdownDescription": "Denies the reset command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the hot-update plugin\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-notify-app-ready`\n- `allow-current-bundle`\n- `allow-reset`",
+          "description": "Default permissions for the hot-update plugin\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-notify-app-ready`\n- `allow-current-bundle`\n- `allow-reset`\n- `allow-apply`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the hot-update plugin\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-notify-app-ready`\n- `allow-current-bundle`\n- `allow-reset`"
+          "markdownDescription": "Default permissions for the hot-update plugin\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-notify-app-ready`\n- `allow-current-bundle`\n- `allow-reset`\n- `allow-apply`"
         }
       ]
     }

@@ -82,7 +82,7 @@ pub use error::{Error, Result};
 pub use extract::ExtractError;
 pub use machine::{AckOutcome, StageError};
 pub use manifest::{ArchiveInfo, Manifest};
-pub use runtime::{BundleSource, CurrentBundle, HotUpdate};
+pub use runtime::{ApplyOutcome, BundleSource, CurrentBundle, HotUpdate};
 pub use update::{UpdateConfig, UpdateOutcome};
 
 use runtime::Shared;
@@ -146,6 +146,7 @@ fn init_with_root<R: Runtime>(
             commands::notify_app_ready,
             commands::current_bundle,
             commands::reset,
+            commands::apply,
         ])
         .setup(move |app, api| {
             let config = api.config().as_ref().ok_or_else(|| {

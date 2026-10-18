@@ -9,6 +9,7 @@ Default permissions for the hot-update plugin
 - `allow-notify-app-ready`
 - `allow-current-bundle`
 - `allow-reset`
+- `allow-apply`
 
 ## Permission Table
 
@@ -18,6 +19,32 @@ Default permissions for the hot-update plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`hot-update:allow-apply`
+
+</td>
+<td>
+
+Enables the apply command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hot-update:deny-apply`
+
+</td>
+<td>
+
+Denies the apply command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
