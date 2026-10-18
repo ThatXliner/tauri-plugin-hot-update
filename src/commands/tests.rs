@@ -49,6 +49,7 @@ fn try_build_app(root: &Path, plugin_config: Option<Value>) -> tauri::Result<App
         "notify_app_ready",
         "current_bundle",
         "reset",
+        "apply",
     ] {
         context
             .runtime_authority_mut()
@@ -453,6 +454,69 @@ fn reset_via_ipc_reverts_to_embedded_on_the_next_launch() {
         invoke(&webview, "current_bundle").unwrap()["source"],
         "embedded"
     );
+}
+
+#[test]
+fn apply_via_ipc_switches_the_running_process_to_the_staged_bundle() {
+    let fx = Fixture::new();
+    fx.publish("0.2.0", "0.1.0");
+    {
+        let (_app, webview) = build_app(&fx.root, enabled_config(&fx));
+        assert_eq!(invoke(&webview, "download").unwrap()["status"], "staged");
+    }
+    let (_app, webview) = build_app(&fx.root, enabled_config(&fx));
+    assert_eq!(
+        invoke(&webview, "notify_app_ready").unwrap()["status"],
+        "committed"
+    );
+    // Nothing newer is waiting yet.
+    assert_eq!(
+        invoke(&webview, "apply").unwrap(),
+        json!({ "status": "nothingStaged" })
+    );
+    fx.publish("0.3.0", "0.1.0");
+    assert_eq!(invoke(&webview, "download").unwrap()["status"], "staged");
+    assert_eq!(invoke(&webview, "apply").unwrap()["status"], "applied");
+    assert_eq!(
+        invoke(&webview, "current_bundle").unwrap()["version"],
+        "0.3.0"
+    );
+    assert_eq!(
+        invoke(&webview, "notify_app_ready").unwrap()["status"],
+        "committed"
+    );
+}
+
+#[test]
+fn apply_outcome_wire_shapes_are_pinned() {
+    let cases = [
+        (
+            ApplyOutcome::Applied {
+                seq: 2,
+                version: ver("1.2.0"),
+            },
+            json!({ "status": "applied", "seq": 2, "version": "1.2.0" }),
+        ),
+        (
+            ApplyOutcome::NothingStaged,
+            json!({ "status": "nothingStaged" }),
+        ),
+        (
+            ApplyOutcome::TrialPending,
+            json!({ "status": "trialPending" }),
+        ),
+        (
+            ApplyOutcome::NotApplicable,
+            json!({ "status": "notApplicable" }),
+        ),
+    ];
+    for (outcome, expected) in cases {
+        assert_eq!(
+            serde_json::to_value(&outcome).unwrap(),
+            expected,
+            "{outcome:?}"
+        );
+    }
 }
 
 // ------------------------------------------------------------- dark-ship

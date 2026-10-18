@@ -5,6 +5,28 @@ All notable changes to `tauri-plugin-hot-update` (crate) and
 packages are kept in lockstep. Format follows [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-18
+
+### Added
+
+- **`apply` command / `HotUpdate::apply_staged()`: switch to a staged bundle
+  without a cold launch.** The served source is no longer fixed for the
+  process lifetime; `apply` promotes `staged → booting` (persisted before the
+  provider switches, same ordering as boot arming) and serves the new bundle
+  from the next request, so the app only has to reload its webview. On iOS and
+  Android, where an app cannot relaunch itself, this removes the "force-quit
+  and reopen" step. Outcomes: `applied`, `nothingStaged`, `trialPending`
+  (refused while the running bundle is unacked), `notApplicable` (staged
+  bundle failed the arming gates and was discarded).
+- Permission `allow-apply` / `deny-apply`, included in `hot-update:default`.
+
+### Changed
+
+- The new bundle's trial is the ordinary one: no `notifyAppReady()` from the
+  reloaded page means the same two-strike rollback on the next cold launches.
+- Shells older than 0.2.0 reject `apply`; apps should fall back to
+  apply-on-next-launch.
+
 ## [0.1.1] - 2026-07-16
 
 ### Changed

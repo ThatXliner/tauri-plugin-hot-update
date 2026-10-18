@@ -73,6 +73,24 @@ export type AckOutcome =
   | { status: "embeddedNoop" }
   | { status: "stale"; seq: number };
 
+/**
+ * Result of {@link apply}:
+ *
+ * - `applied` — this process now serves the staged bundle; call
+ *   `location.reload()` immediately.
+ * - `nothingStaged` — no update is waiting.
+ * - `trialPending` — the running bundle has not acked yet; retry after
+ *   {@link notifyAppReady}.
+ * - `notApplicable` — the staged bundle could no longer be armed
+ *   (blacklisted, caught up to by the embedded frontend, or missing) and was
+ *   discarded.
+ */
+export type ApplyOutcome =
+  | { status: "applied"; seq: number; version: string }
+  | { status: "nothingStaged" }
+  | { status: "trialPending" }
+  | { status: "notApplicable" };
+
 /** Where the currently served frontend comes from. */
 export type BundleSource = "embedded" | "ota";
 
@@ -130,6 +148,23 @@ export async function download(): Promise<DownloadOutcome> {
  */
 export async function notifyAppReady(): Promise<AckOutcome> {
   return invoke("plugin:hot-update|notify_app_ready");
+}
+
+/**
+ * Switch this process to the staged bundle without a cold launch (added in
+ * 0.2.0). Reload the webview right after an `applied` outcome — until then
+ * the old page keeps running against the new bundle directory, so lazily
+ * loaded chunks of the old build may be missing.
+ *
+ * The new bundle starts a normal trial boot: if the reloaded page never
+ * calls {@link notifyAppReady}, the usual two-strike rollback applies.
+ *
+ * Rejects when the plugin is disabled by config, and on a shell older than
+ * 0.2.0 (the command does not exist there) — callers should treat a
+ * rejection as "apply on the next cold launch, as before".
+ */
+export async function apply(): Promise<ApplyOutcome> {
+  return invoke("plugin:hot-update|apply");
 }
 
 /** What is being served right now. */

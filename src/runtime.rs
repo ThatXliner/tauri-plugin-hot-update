@@ -11,12 +11,12 @@
 //! served (a trial boot without a persisted marker could evade rollback).
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use semver::Version;
 use serde::Serialize;
 
-use crate::machine::{self, AckOutcome, Active};
+use crate::machine::{self, AckOutcome, Active, ApplyDecision};
 use crate::store::Store;
 use crate::{Error, Result};
 
@@ -28,16 +28,23 @@ pub(crate) struct Shared {
     activation: OnceLock<Activation>,
 }
 
-/// Everything fixed for the lifetime of the process at boot resolution.
-pub(crate) struct Activation {
-    store: Store,
-    /// The source this process serves. Never changes mid-session — a
-    /// download that finishes later only stages for the *next* boot.
+/// What the provider serves right now. Set at boot resolution and replaced
+/// only by [`HotUpdate::apply_staged`] (the in-process swap that spares the
+/// user a restart); a download finishing later still only *stages*.
+#[derive(Clone)]
+struct Current {
     active: Active,
-    /// Bundle dir for [`Active::Ota`], resolved once.
+    /// Bundle dir for [`Active::Ota`], resolved once per swap.
     active_dir: Option<PathBuf>,
     /// Version of the active bundle (OTA) or of the embedded assets.
     active_version: Version,
+}
+
+/// Everything fixed for the lifetime of the process, plus the swappable
+/// [`Current`] source.
+pub(crate) struct Activation {
+    store: Store,
+    current: RwLock<Current>,
     embedded_version: Version,
     /// Serializes update pipeline runs ([`crate::update`]): concurrent
     /// check/download calls must not race seq allocation or double-download.
@@ -59,13 +66,20 @@ impl Activation {
     pub(crate) fn update_lock(&self) -> &tokio::sync::Mutex<()> {
         &self.update_lock
     }
+
+    fn current(&self) -> Current {
+        self.current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
 }
 
 impl Shared {
     /// Directory the provider should serve from, or `None` for embedded.
     /// `None` before activation: the fail-safe default is embedded.
-    pub(crate) fn active_dir(&self) -> Option<&PathBuf> {
-        self.activation.get()?.active_dir.as_ref()
+    pub(crate) fn active_dir(&self) -> Option<PathBuf> {
+        self.activation.get()?.current().active_dir
     }
 
     pub(crate) fn is_activated(&self) -> bool {
@@ -141,9 +155,11 @@ pub(crate) fn initialize(shared: &Shared, root: PathBuf, embedded_version: Versi
 
     let activation = Activation {
         store,
-        active,
-        active_dir,
-        active_version,
+        current: RwLock::new(Current {
+            active,
+            active_dir,
+            active_version,
+        }),
         embedded_version,
         update_lock: tokio::sync::Mutex::new(()),
     };
@@ -170,6 +186,26 @@ pub struct CurrentBundle {
     pub version: Version,
 }
 
+/// Result of [`HotUpdate::apply_staged`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ApplyOutcome {
+    /// The staged bundle is now what this process serves; reload the webview.
+    Applied { seq: u64, version: Version },
+    /// No update is waiting.
+    NothingStaged,
+    /// The bundle this process booted has not acked yet; try again after
+    /// `notifyAppReady()`.
+    TrialPending,
+    /// The staged bundle could no longer be armed (blacklisted, superseded by
+    /// the embedded frontend, or missing on disk) and was discarded.
+    NotApplicable,
+}
+
 /// Runtime API, managed in the app state by [`crate::init`]. IPC commands
 /// (WP4) will be thin wrappers over these methods.
 pub struct HotUpdate {
@@ -184,8 +220,9 @@ impl HotUpdate {
     /// stays staged for its own trial boot. Idempotent.
     pub fn notify_app_ready(&self) -> Result<AckOutcome> {
         let activation = self.shared.activation()?;
+        let booted = activation.current().active;
         let (outcome, effects) = activation.store.update(|state| {
-            let (state, outcome, effects) = machine::ack(state, activation.active);
+            let (state, outcome, effects) = machine::ack(state, booted);
             (state, (outcome, effects))
         })?;
         activation.store.apply_effects(&effects);
@@ -204,11 +241,12 @@ impl HotUpdate {
     /// What is being served right now.
     pub fn current_bundle(&self) -> Result<CurrentBundle> {
         let activation = self.shared.activation()?;
-        Ok(match activation.active {
+        let current = activation.current();
+        Ok(match current.active {
             Active::Ota(seq) => CurrentBundle {
                 source: BundleSource::Ota,
                 seq: Some(seq),
-                version: activation.active_version.clone(),
+                version: current.active_version,
             },
             Active::Embedded => CurrentBundle {
                 source: BundleSource::Embedded,
@@ -218,15 +256,62 @@ impl HotUpdate {
         })
     }
 
+    /// Swap the served frontend to the staged bundle *now*, in this process,
+    /// without a cold launch. The caller reloads the webview right after, so
+    /// the next page load is served from the new bundle.
+    ///
+    /// The staged→booting promotion is persisted BEFORE the provider is
+    /// switched (the same anti-brick ordering as boot arming), so a crash or
+    /// kill after the swap but before the new page's `notifyAppReady` falls
+    /// into the ordinary two-strike rollback path. Refuses while the current
+    /// bundle has not been acked yet ([`ApplyOutcome::TrialPending`]): two
+    /// unproven bundles must never stack.
+    pub fn apply_staged(&self) -> Result<ApplyOutcome> {
+        let activation = self.shared.activation()?;
+        let present = activation.store.present_seqs();
+        let (decision, effects) = activation.store.update(|state| {
+            let (state, decision, effects) =
+                machine::promote_staged(state, &activation.embedded_version, &present);
+            (state, (decision, effects))
+        })?;
+        activation.store.apply_effects(&effects);
+        Ok(match decision {
+            ApplyDecision::Applied(seq) => {
+                let version = activation
+                    .store
+                    .load_state()
+                    .versions
+                    .get(&seq)
+                    .map(|meta| meta.version.clone())
+                    .unwrap_or_else(|| activation.embedded_version.clone());
+                let mut current = activation
+                    .current
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner());
+                *current = Current {
+                    active: Active::Ota(seq),
+                    active_dir: Some(activation.store.bundle_dir(seq)),
+                    active_version: version.clone(),
+                };
+                log::info!("hot-update: applied staged bundle seq {seq} (v{version}) in-process");
+                ApplyOutcome::Applied { seq, version }
+            }
+            ApplyDecision::NothingStaged => ApplyOutcome::NothingStaged,
+            ApplyDecision::TrialPending => ApplyOutcome::TrialPending,
+            ApplyDecision::Discarded => ApplyOutcome::NotApplicable,
+        })
+    }
+
     /// Debug/support escape hatch: wipe all OTA state and bundles, restart
     /// the watermark from the embedded version. The currently served bundle
     /// dir (if any) is left in place until the next boot's GC so the running
     /// webview is not torn; serving reverts to embedded on the next launch.
     pub fn reset(&self) -> Result<()> {
         let activation = self.shared.activation()?;
-        let effects = activation.store.update(|state| {
-            machine::reset(state, &activation.embedded_version, activation.active)
-        })?;
+        let active = activation.current().active;
+        let effects = activation
+            .store
+            .update(|state| machine::reset(state, &activation.embedded_version, active))?;
         activation.store.apply_effects(&effects);
         activation.store.sweep_foreign_entries();
         log::info!("hot-update: state reset; embedded serving resumes next launch");

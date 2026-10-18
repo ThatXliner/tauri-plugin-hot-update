@@ -314,6 +314,56 @@ pub fn ack(mut state: State, booted: Active) -> (State, AckOutcome, Vec<Effect>)
     (state, AckOutcome::Committed(seq), effects)
 }
 
+/// What [`promote_staged`] decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyDecision {
+    /// `staged` was promoted to `booting`; the shell must now serve it.
+    Applied(u64),
+    NothingStaged,
+    /// `booting` is occupied: the running bundle has not acked yet.
+    TrialPending,
+    /// The staged bundle failed the arming gates and was dropped.
+    Discarded,
+}
+
+/// Mid-session counterpart of boot arming (step 4 of [`resolve_boot`]):
+/// promote the staged bundle to `booting` so the shell can switch serving
+/// without a cold launch. Same gates as boot (dir present, hash not
+/// blacklisted, version strictly above the watermark). Refused while a trial
+/// is unacked so two unproven bundles can never stack.
+pub fn promote_staged(
+    mut state: State,
+    embedded_version: &Version,
+    present: &BTreeSet<u64>,
+) -> (State, ApplyDecision, Vec<Effect>) {
+    if state.booting.is_some() {
+        return (state, ApplyDecision::TrialPending, Vec::new());
+    }
+    let Some(seq) = state.staged.take() else {
+        return (state, ApplyDecision::NothingStaged, Vec::new());
+    };
+    let watermark = state.max_version_seen.clone().map_or_else(
+        || embedded_version.clone(),
+        |seen| seen.max(embedded_version.clone()),
+    );
+    let arm = present.contains(&seq)
+        && state.versions.get(&seq).is_some_and(|meta| {
+            !state.failed.contains(&meta.archive_sha256) && meta.version > watermark
+        });
+    if arm {
+        state.booting = Some(seq);
+        state.booting_strikes = 0;
+        return (state, ApplyDecision::Applied(seq), Vec::new());
+    }
+    state.versions.remove(&seq);
+    let effects = if present.contains(&seq) {
+        vec![Effect::DeleteBundle(seq)]
+    } else {
+        Vec::new()
+    };
+    (state, ApplyDecision::Discarded, effects)
+}
+
 /// Why a staging request was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StageError {

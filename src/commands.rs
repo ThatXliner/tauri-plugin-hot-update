@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use crate::machine::AckOutcome;
-use crate::runtime::{BundleSource, CurrentBundle, HotUpdate};
+use crate::runtime::{ApplyOutcome, BundleSource, CurrentBundle, HotUpdate};
 use crate::update::{UpdateConfig, UpdateOutcome};
 use crate::{Error, Result};
 
@@ -190,6 +190,20 @@ pub(crate) fn reset(
         return Ok(());
     }
     hot_update.reset()
+}
+
+/// Switch this process to the staged bundle without a cold launch. The
+/// caller must reload the webview right after an `applied` outcome; until it
+/// does, the old page keeps running against the new bundle directory, so
+/// reload immediately. Refuses while disabled, like the other update-
+/// performing commands.
+#[tauri::command]
+pub(crate) fn apply(
+    hot_update: State<'_, HotUpdate>,
+    config: State<'_, CommandConfig>,
+) -> Result<ApplyOutcome> {
+    config.update_config()?;
+    hot_update.apply_staged()
 }
 
 #[cfg(test)]
