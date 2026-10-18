@@ -600,3 +600,33 @@ async fn non_string_base_version_is_refused_as_invalid() {
         }
     );
 }
+
+#[tokio::test]
+async fn downloaded_bundle_is_rechecked_against_a_newer_shell_at_launch() {
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.7-ota.1", "1.1.0", Some("1.1.5"));
+    let outcome = boot(&fx.root, "1.1.5")
+        .check_and_download(&fx.config(), no_progress)
+        .await
+        .unwrap();
+    let UpdateOutcome::Staged { seq, .. } = outcome else {
+        panic!("{outcome:?}");
+    };
+    // The base is recorded with the staged bundle.
+    assert_eq!(
+        fx.state()["versions"][seq.to_string()]["baseVersion"],
+        "1.1.5"
+    );
+
+    // Store update to 1.1.6 before the next launch: not applied.
+    let hot_update = boot(&fx.root, "1.1.6");
+    assert_eq!(
+        hot_update.current_bundle().unwrap().source,
+        runtime::BundleSource::Embedded
+    );
+    let state = fx.state();
+    assert!(state["staged"].is_null());
+    assert!(state["booting"].is_null());
+    assert_eq!(state["failed"], serde_json::json!([]));
+    assert!(!fx.bundle_dir(seq).exists());
+}

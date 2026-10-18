@@ -13,6 +13,7 @@ fn meta(version: &str, sha: &str) -> BundleMeta {
     BundleMeta {
         version: v(version),
         archive_sha256: sha.to_string(),
+        base_version: None,
     }
 }
 
@@ -736,4 +737,144 @@ fn ack_after_a_mid_session_reset_is_refused() {
     assert_eq!(outcome, AckOutcome::Stale(1));
     assert_eq!(after, fresh);
     assert!(effects.is_empty());
+}
+
+// ------------------------------------------------- base gate at arming
+
+fn meta_with_base(version: &str, sha: &str, base: &str) -> BundleMeta {
+    BundleMeta {
+        base_version: Some(BaseVersion::parse(base)),
+        ..meta(version, sha)
+    }
+}
+
+/// Committed seq 1 at 1.5.0, then seq 2 staged with `m` (watermark 1.5.0).
+fn committed_plus_staged(m: BundleMeta) -> State {
+    let state = committed_state(1, "1.5.0", "sha-1");
+    let (state, _) = stage_ok(state, 2, m);
+    state
+}
+
+#[test]
+fn staged_bundle_is_discarded_when_the_shell_is_now_newer_than_its_base() {
+    // Staged under shell 1.1.0 (base 1.1.0 was fine); a store update to
+    // 1.2.0 lands before the next launch.
+    let state = committed_plus_staged(meta_with_base("1.6.0", "sha-2", "1.1.0"));
+    let boot = resolve_boot(state, &v("1.2.0"), &present(&[1, 2]));
+    assert_eq!(
+        boot.base_refused,
+        Some(BaseRefusal::ShellNewerThanBase {
+            seq: 2,
+            base: v("1.1.0"),
+            shell: v("1.2.0"),
+        })
+    );
+    assert_eq!(boot.active, Active::Ota(1), "current bundle keeps serving");
+    assert_eq!(boot.state.committed, Some(1));
+    assert_eq!(boot.state.staged, None);
+    assert_eq!(boot.state.booting, None);
+    assert!(boot.state.failed.is_empty(), "a refusal, not a failure");
+    assert_eq!(boot.rolled_back, None);
+    assert!(!boot.state.versions.contains_key(&2));
+    assert_eq!(boot.effects, vec![Effect::DeleteBundle(2)]);
+}
+
+#[test]
+fn staged_bundle_with_an_invalid_base_is_discarded_at_boot() {
+    let state = committed_plus_staged(meta_with_base("1.6.0", "sha-2", "1.x"));
+    let boot = resolve_boot(state, &v("1.0.0"), &present(&[1, 2]));
+    assert_eq!(
+        boot.base_refused,
+        Some(BaseRefusal::InvalidBaseVersion {
+            seq: 2,
+            base: "1.x".into(),
+            shell: v("1.0.0"),
+        })
+    );
+    assert_eq!(boot.active, Active::Ota(1));
+    assert_eq!(boot.state.staged, None);
+    assert!(boot.state.failed.is_empty());
+    assert_eq!(boot.effects, vec![Effect::DeleteBundle(2)]);
+}
+
+#[test]
+fn staged_bundle_is_armed_when_the_shell_is_at_or_below_its_base() {
+    for shell in ["1.0.0", "1.1.0"] {
+        let state = committed_plus_staged(meta_with_base("1.6.0", "sha-2", "1.1.0"));
+        let boot = resolve_boot(state, &v(shell), &present(&[1, 2]));
+        assert_eq!(boot.base_refused, None, "shell {shell}");
+        assert_eq!(boot.active, Active::Ota(2), "shell {shell}");
+        assert_eq!(boot.state.booting, Some(2));
+    }
+}
+
+#[test]
+fn staged_bundle_without_a_base_keeps_the_old_arming_rules() {
+    let state = committed_plus_staged(meta("1.6.0", "sha-2"));
+    let boot = resolve_boot(state, &v("1.2.0"), &present(&[1, 2]));
+    assert_eq!(boot.base_refused, None);
+    assert_eq!(boot.active, Active::Ota(2));
+}
+
+#[test]
+fn apply_refuses_a_staged_bundle_by_the_base_gate() {
+    let state = committed_plus_staged(meta_with_base("1.6.0", "sha-2", "1.1.0"));
+    let (state, decision, effects) = promote_staged(state, &v("1.2.0"), &present(&[1, 2]));
+    assert_eq!(
+        decision,
+        ApplyDecision::BaseRefused(BaseRefusal::ShellNewerThanBase {
+            seq: 2,
+            base: v("1.1.0"),
+            shell: v("1.2.0"),
+        })
+    );
+    assert_eq!(effects, vec![Effect::DeleteBundle(2)]);
+    assert_eq!(state.committed, Some(1));
+    assert_eq!(state.staged, None);
+    assert_eq!(state.booting, None);
+    assert!(state.failed.is_empty());
+
+    // Same bundle, shell at the base: applied as before.
+    let state = committed_plus_staged(meta_with_base("1.6.0", "sha-2", "1.1.0"));
+    let (_, decision, _) = promote_staged(state, &v("1.1.0"), &present(&[1, 2]));
+    assert_eq!(decision, ApplyDecision::Applied(2));
+}
+
+#[test]
+fn base_refusal_log_text_names_the_status() {
+    let newer = BaseRefusal::ShellNewerThanBase {
+        seq: 2,
+        base: v("1.1.0"),
+        shell: v("1.2.0"),
+    };
+    assert_eq!(
+        newer.to_string(),
+        "shellNewerThanBase: staged bundle seq 2 not applied, shell 1.2.0 is newer than its \
+         baseVersion 1.1.0; discarded, current bundle kept"
+    );
+    let invalid = BaseRefusal::InvalidBaseVersion {
+        seq: 2,
+        base: "1.x".into(),
+        shell: v("1.2.0"),
+    };
+    assert_eq!(
+        invalid.to_string(),
+        "invalidBaseVersion: staged bundle seq 2 not applied, its baseVersion \"1.x\" is not \
+         a semver (shell 1.2.0); discarded, current bundle kept"
+    );
+}
+
+#[test]
+fn bundle_meta_base_version_is_optional_on_disk() {
+    // A pre-gate state.json entry has no baseVersion.
+    let old: BundleMeta =
+        serde_json::from_value(serde_json::json!({ "version": "1.1.0", "archiveSha256": "aa" }))
+            .unwrap();
+    assert_eq!(old.base_version, None);
+    assert!(!serde_json::to_string(&old).unwrap().contains("baseVersion"));
+
+    let with = meta_with_base("1.1.0", "aa", "1.0.5");
+    let json = serde_json::to_value(&with).unwrap();
+    assert_eq!(json["baseVersion"], "1.0.5");
+    assert_eq!(serde_json::from_value::<BundleMeta>(json).unwrap(), with);
 }

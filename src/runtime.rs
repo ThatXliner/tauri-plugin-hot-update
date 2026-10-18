@@ -100,6 +100,10 @@ pub(crate) fn initialize(shared: &Shared, root: PathBuf, embedded_version: Versi
     let present = store.present_seqs();
     let outcome = machine::resolve_boot(state, &embedded_version, &present);
 
+    if let Some(refusal) = &outcome.base_refused {
+        log::info!("hot-update: {refusal}");
+    }
+
     if let Some(seq) = outcome.rolled_back {
         log::warn!(
             "hot-update: bundle seq {seq} was armed last boot but never acked; \
@@ -202,7 +206,8 @@ pub enum ApplyOutcome {
     /// `notifyAppReady()`.
     TrialPending,
     /// The staged bundle could no longer be armed (blacklisted, superseded by
-    /// the embedded frontend, or missing on disk) and was discarded.
+    /// the embedded frontend, refused by the base gate, or missing on disk)
+    /// and was discarded.
     NotApplicable,
 }
 
@@ -299,6 +304,10 @@ impl HotUpdate {
             ApplyDecision::NothingStaged => ApplyOutcome::NothingStaged,
             ApplyDecision::TrialPending => ApplyOutcome::TrialPending,
             ApplyDecision::Discarded => ApplyOutcome::NotApplicable,
+            ApplyDecision::BaseRefused(refusal) => {
+                log::info!("hot-update: {refusal}");
+                ApplyOutcome::NotApplicable
+            }
         })
     }
 

@@ -75,6 +75,7 @@ fn activate_bundle(root: &Path, files: &[(&str, &str)]) -> Arc<Shared> {
                 BundleMeta {
                     version: Version::parse("1.1.0").unwrap(),
                     archive_sha256: "sha-1".to_string(),
+                    base_version: None,
                 },
             )
         })

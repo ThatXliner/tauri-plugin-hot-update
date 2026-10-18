@@ -34,6 +34,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
+use crate::manifest::BaseVersion;
+
 /// Per-bundle metadata recorded at staging time.
 ///
 /// `archive_sha256` is the identity used for the failure blacklist: a fixed
@@ -43,6 +45,66 @@ use serde::{Deserialize, Serialize};
 pub struct BundleMeta {
     pub version: Version,
     pub archive_sha256: String,
+    /// The manifest `baseVersion` the bundle was staged with. Re-checked
+    /// against the shell when the staged bundle is armed (boot or `apply`):
+    /// a store/Sparkle update can land between download and arming. `None`
+    /// (no field in the manifest, or a pre-gate `state.json`) skips the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_version: Option<BaseVersion>,
+}
+
+/// Why a staged bundle was not armed because of its `baseVersion`. Not a
+/// failure: the bundle is discarded (not blacklisted) and the current
+/// bundle keeps serving. Mirrors the download-time refusals
+/// `shellNewerThanBase` / `invalidBaseVersion`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaseRefusal {
+    /// The shell is newer than the base the bundle was built from.
+    ShellNewerThanBase {
+        seq: u64,
+        base: Version,
+        shell: Version,
+    },
+    /// The recorded base is not a semver.
+    InvalidBaseVersion {
+        seq: u64,
+        base: String,
+        shell: Version,
+    },
+}
+
+impl std::fmt::Display for BaseRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ShellNewerThanBase { seq, base, shell } => write!(
+                f,
+                "shellNewerThanBase: staged bundle seq {seq} not applied, shell {shell} \
+                 is newer than its baseVersion {base}; discarded, current bundle kept"
+            ),
+            Self::InvalidBaseVersion { seq, base, shell } => write!(
+                f,
+                "invalidBaseVersion: staged bundle seq {seq} not applied, its baseVersion \
+                 {base:?} is not a semver (shell {shell}); discarded, current bundle kept"
+            ),
+        }
+    }
+}
+
+/// The base gate for a staged bundle, against the running shell.
+fn base_refusal(seq: u64, meta: &BundleMeta, shell: &Version) -> Option<BaseRefusal> {
+    match meta.base_version.as_ref()? {
+        BaseVersion::Valid(base) if shell > base => Some(BaseRefusal::ShellNewerThanBase {
+            seq,
+            base: base.clone(),
+            shell: shell.clone(),
+        }),
+        BaseVersion::Invalid(raw) => Some(BaseRefusal::InvalidBaseVersion {
+            seq,
+            base: raw.clone(),
+            shell: shell.clone(),
+        }),
+        BaseVersion::Valid(_) => None,
+    }
 }
 
 /// The persisted contents of `state.json`.
@@ -117,6 +179,9 @@ pub struct BootOutcome {
     pub active: Active,
     /// Seq blamed for the previous unacked trial boot, if any.
     pub rolled_back: Option<u64>,
+    /// The staged bundle was discarded by the base gate (shell now newer
+    /// than its `baseVersion`, or the base is invalid). Logged, not a failure.
+    pub base_refused: Option<BaseRefusal>,
     pub effects: Vec<Effect>,
 }
 
@@ -207,8 +272,16 @@ pub fn resolve_boot(
     } else {
         state.staged.take()
     };
+    let mut base_refused = None;
     if let Some(seq) = promote {
-        let arm = present.contains(&seq)
+        // Base gate: a store update may have made the shell newer than the
+        // base this bundle was built from since it was staged.
+        base_refused = state
+            .versions
+            .get(&seq)
+            .and_then(|meta| base_refusal(seq, meta, embedded_version));
+        let arm = base_refused.is_none()
+            && present.contains(&seq)
             && state.versions.get(&seq).is_some_and(|meta| {
                 !state.failed.contains(&meta.archive_sha256)
                     && state
@@ -250,6 +323,7 @@ pub fn resolve_boot(
         state,
         active,
         rolled_back,
+        base_refused,
         effects,
     }
 }
@@ -315,7 +389,7 @@ pub fn ack(mut state: State, booted: Active) -> (State, AckOutcome, Vec<Effect>)
 }
 
 /// What [`promote_staged`] decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyDecision {
     /// `staged` was promoted to `booting`; the shell must now serve it.
     Applied(u64),
@@ -324,12 +398,14 @@ pub enum ApplyDecision {
     TrialPending,
     /// The staged bundle failed the arming gates and was dropped.
     Discarded,
+    /// The staged bundle failed the base gate and was dropped (not a failure).
+    BaseRefused(BaseRefusal),
 }
 
 /// Mid-session counterpart of boot arming (step 4 of [`resolve_boot`]):
 /// promote the staged bundle to `booting` so the shell can switch serving
 /// without a cold launch. Same gates as boot (dir present, hash not
-/// blacklisted, version strictly above the watermark). Refused while a trial
+/// blacklisted, version strictly above the watermark, base gate). Refused while a trial
 /// is unacked so two unproven bundles can never stack.
 pub fn promote_staged(
     mut state: State,
@@ -342,11 +418,16 @@ pub fn promote_staged(
     let Some(seq) = state.staged.take() else {
         return (state, ApplyDecision::NothingStaged, Vec::new());
     };
+    let base_refused = state
+        .versions
+        .get(&seq)
+        .and_then(|meta| base_refusal(seq, meta, embedded_version));
     let watermark = state.max_version_seen.clone().map_or_else(
         || embedded_version.clone(),
         |seen| seen.max(embedded_version.clone()),
     );
-    let arm = present.contains(&seq)
+    let arm = base_refused.is_none()
+        && present.contains(&seq)
         && state.versions.get(&seq).is_some_and(|meta| {
             !state.failed.contains(&meta.archive_sha256) && meta.version > watermark
         });
@@ -361,7 +442,11 @@ pub fn promote_staged(
     } else {
         Vec::new()
     };
-    (state, ApplyDecision::Discarded, effects)
+    let decision = match base_refused {
+        Some(refusal) => ApplyDecision::BaseRefused(refusal),
+        None => ApplyDecision::Discarded,
+    };
+    (state, decision, effects)
 }
 
 /// Why a staging request was refused.

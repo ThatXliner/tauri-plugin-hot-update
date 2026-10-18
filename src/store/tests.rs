@@ -33,6 +33,7 @@ fn populated_state() -> State {
             BundleMeta {
                 version: Version::parse(version).unwrap(),
                 archive_sha256: sha.to_string(),
+                base_version: None,
             },
         );
     }
@@ -177,6 +178,7 @@ fn update_persists_the_transition_result() {
     let meta = BundleMeta {
         version: Version::parse("1.1.0").unwrap(),
         archive_sha256: "sha-1".to_string(),
+        base_version: None,
     };
     let result = store.update(|state| stage(state, 1, meta.clone())).unwrap();
     assert!(result.is_ok());

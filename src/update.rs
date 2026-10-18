@@ -169,6 +169,7 @@ impl HotUpdate {
         let meta = BundleMeta {
             version: manifest.version.clone(),
             archive_sha256: manifest.archive.sha256.clone(),
+            base_version: manifest.base_version.clone(),
         };
         match store.update(|state| machine::stage(state, seq, meta))? {
             Ok(effects) => {

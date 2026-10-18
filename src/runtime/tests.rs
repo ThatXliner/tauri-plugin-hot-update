@@ -38,6 +38,7 @@ fn stage_bundle(root: &Path, seq: u64, version: &str, sha: &str) {
                 BundleMeta {
                     version: ver(version),
                     archive_sha256: sha.to_string(),
+                    base_version: None,
                 },
             )
         })
@@ -506,6 +507,7 @@ fn apply_staged_discards_a_bundle_the_embedded_frontend_has_caught_up_to() {
                 BundleMeta {
                     version: ver("1.2.0"),
                     archive_sha256: "aa".into(),
+                    base_version: None,
                 },
             );
             (state, ())
@@ -516,5 +518,79 @@ fn apply_staged_discards_a_bundle_the_embedded_frontend_has_caught_up_to() {
         ApplyOutcome::NotApplicable
     );
     assert_eq!(shared.active_dir(), None);
+    assert!(!dir.exists());
+}
+
+// ------------------------------------------------- base gate at arming
+
+/// Stage seq 1 (dir on disk) with a manifest `baseVersion`.
+fn stage_bundle_with_base(root: &Path, version: &str, base: &str) -> std::path::PathBuf {
+    let store = Store::new(root.to_path_buf());
+    let dir = store.bundle_dir(1);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.html"), "bundle 1").unwrap();
+    store
+        .update(|state| {
+            stage(
+                state,
+                1,
+                BundleMeta {
+                    version: ver(version),
+                    archive_sha256: "aa".into(),
+                    base_version: Some(crate::manifest::BaseVersion::parse(base)),
+                },
+            )
+        })
+        .unwrap()
+        .expect("stage gates should pass");
+    dir
+}
+
+#[test]
+fn staged_bundle_is_not_applied_after_a_store_update_past_its_base() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    boot(&root, "1.1.5");
+    let dir = stage_bundle_with_base(&root, "1.1.7-ota.1", "1.1.5");
+
+    // A store update to 1.1.6 lands before the next cold launch.
+    let (shared, hot_update) = boot(&root, "1.1.6");
+    assert_eq!(shared.active_dir(), None, "embedded keeps serving");
+    assert_eq!(
+        hot_update.current_bundle().unwrap().source,
+        BundleSource::Embedded
+    );
+    let state = raw_state(&root);
+    assert!(state["staged"].is_null());
+    assert!(state["booting"].is_null());
+    assert_eq!(state["failed"], serde_json::json!([]), "not blacklisted");
+    assert!(!dir.exists(), "discarded bundle dir is removed");
+}
+
+#[test]
+fn staged_bundle_at_its_base_is_still_applied() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    boot(&root, "1.1.5");
+    let dir = stage_bundle_with_base(&root, "1.1.7-ota.1", "1.1.5");
+    let (shared, _) = boot(&root, "1.1.5");
+    assert_eq!(shared.active_dir(), Some(dir));
+    assert_eq!(raw_state(&root)["booting"], 1);
+}
+
+#[test]
+fn apply_staged_refuses_a_bundle_past_its_base_as_not_applicable() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    // Staged by an older shell's pipeline; this process is the newer shell.
+    let (shared, hot_update) = boot(&root, "1.1.6");
+    let dir = stage_bundle_with_base(&root, "1.1.7-ota.1", "1.1.5");
+    assert_eq!(
+        hot_update.apply_staged().unwrap(),
+        ApplyOutcome::NotApplicable
+    );
+    assert_eq!(shared.active_dir(), None);
+    assert!(raw_state(&root)["staged"].is_null());
+    assert_eq!(raw_state(&root)["failed"], serde_json::json!([]));
     assert!(!dir.exists());
 }

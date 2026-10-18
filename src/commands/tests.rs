@@ -111,6 +111,7 @@ fn stage_bundle(root: &Path, seq: u64, version: &str, sha: &str) {
                 BundleMeta {
                     version: ver(version),
                     archive_sha256: sha.to_string(),
+                    base_version: None,
                 },
             )
         })

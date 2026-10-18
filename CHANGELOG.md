@@ -17,6 +17,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   (`base` = raw value). `Manifest::base_version` is now
   `Option<BaseVersion>` (`Valid(Version)` / `Invalid(String)`); the wire
   shape is unchanged (a plain string).
+- A staged bundle is re-checked against the base gate when it is armed (next
+  cold launch, or `apply`): if a store update made the shell newer than the
+  bundle's `baseVersion` (or the base is invalid), the bundle is discarded,
+  not blacklisted, and the current bundle keeps serving. Logged as
+  `shellNewerThanBase` / `invalidBaseVersion`; `apply` reports
+  `notApplicable`. Bundles staged without a `baseVersion` (and pre-gate
+  `state.json`) behave as before.
 
 ## [0.2.0] - 2026-10-18
 
