@@ -186,7 +186,7 @@ await reset();         // wipe OTA state, revert to embedded on next launch
 | `reset()` | `void` | Wipe all OTA state; next launch reverts to embedded. Debug/support hatch. |
 | `onDownloadProgress(fn)` | `UnlistenFn` | Throttled byte-progress events during `download()`. |
 
-Refusals are first-class outcomes, not thrown errors — `check`/`download` resolve with a `status` of `available` / `staged` / `upToDate` / `blacklisted` / `shellTooOld` / `alreadyStaged`, each carrying the relevant context. Every wire shape is pinned by a golden serde test.
+Refusals are first-class outcomes, not thrown errors — `check`/`download` resolve with a `status` of `available` / `staged` / `upToDate` / `blacklisted` / `shellTooOld` / `shellNewerThanBase` / `alreadyStaged`, each carrying the relevant context. Every wire shape is pinned by a golden serde test.
 
 ## Publishing a bundle
 

@@ -422,3 +422,48 @@ async fn update_api_errors_cleanly_before_initialization() {
         Err(Error::NotActive)
     ));
 }
+
+// ------------------------------------------------------------ base gate
+
+#[tokio::test]
+async fn bundle_built_from_an_older_base_than_the_shell_is_refused() {
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.6-ota.1", "1.1.0", Some("1.1.4"));
+    let outcome = boot(&fx.root, "1.1.5")
+        .check_and_download(&fx.config(), no_progress)
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        UpdateOutcome::ShellNewerThanBase {
+            base: ver("1.1.4"),
+            shell: ver("1.1.5")
+        }
+    );
+    assert_eq!(fx.server.request_count("/bundle-1.1.6-ota.1.tar.gz"), 0);
+}
+
+#[tokio::test]
+async fn bundle_built_from_the_same_base_as_the_shell_is_staged() {
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.6-ota.1", "1.1.0", Some("1.1.5"));
+    let outcome = boot(&fx.root, "1.1.5")
+        .check_and_download(&fx.config(), no_progress)
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::Staged { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn manifest_without_base_version_skips_the_base_gate() {
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.6-ota.1", "1.1.0", None);
+    let outcome = boot(&fx.root, "1.1.5").check(&fx.config()).await.unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::Available { .. }),
+        "{outcome:?}"
+    );
+}

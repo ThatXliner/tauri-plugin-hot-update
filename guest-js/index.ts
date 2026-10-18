@@ -23,6 +23,8 @@ export interface Manifest {
   createdAt: string;
   /** Minimum shell (app) version able to run this bundle. */
   minShellVersion: string;
+  /** Native app version the bundle was built from (optional). */
+  baseVersion?: string;
   archive: ArchiveInfo;
 }
 
@@ -40,6 +42,9 @@ export interface Manifest {
  *   fixed release must ship under a new hash.
  * - `shellTooOld` — the bundle needs a newer app binary; a store update is
  *   required first.
+ * - `shellNewerThanBase` — the bundle was built from an older native base
+ *   than the installed app; applying it would downgrade the app's newer
+ *   embedded frontend, so the install stays put.
  * - `alreadyStaged` — exactly this archive is already waiting for its
  *   trial boot.
  */
@@ -49,6 +54,7 @@ export type UpdateOutcome =
   | { status: "upToDate"; offered: string; watermark: string }
   | { status: "blacklisted"; version: string }
   | { status: "shellTooOld"; required: string; shell: string }
+  | { status: "shellNewerThanBase"; base: string; shell: string }
   | { status: "alreadyStaged"; seq: number; version: string };
 
 /** {@link check} never downloads, so it never reports `staged`. */

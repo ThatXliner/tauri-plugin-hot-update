@@ -131,6 +131,7 @@ fn update_outcome_wire_shapes_are_pinned() {
         version: ver("1.1.0"),
         created_at: "2026-07-10T00:00:00Z".into(),
         min_shell_version: ver("1.0.0"),
+        base_version: None,
         archive: ArchiveInfo {
             url: "https://cdn.example.com/bundle.tar.gz".into(),
             sha256: "aa".repeat(32),
@@ -180,6 +181,13 @@ fn update_outcome_wire_shapes_are_pinned() {
                 shell: ver("1.0.0"),
             },
             json!({ "status": "shellTooOld", "required": "2.0.0", "shell": "1.0.0" }),
+        ),
+        (
+            UpdateOutcome::ShellNewerThanBase {
+                base: ver("1.1.4"),
+                shell: ver("1.1.5"),
+            },
+            json!({ "status": "shellNewerThanBase", "base": "1.1.4", "shell": "1.1.5" }),
         ),
         (
             UpdateOutcome::AlreadyStaged {

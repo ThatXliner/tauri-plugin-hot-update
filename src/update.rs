@@ -77,6 +77,10 @@ pub enum UpdateOutcome {
     /// The bundle requires a newer shell; this install stays put until a
     /// store update arrives.
     ShellTooOld { required: Version, shell: Version },
+    /// The bundle was built from an older native base than the installed
+    /// shell; applying it would downgrade the shell's newer embedded
+    /// frontend. This install stays on its current bundle.
+    ShellNewerThanBase { base: Version, shell: Version },
     /// Exactly this archive is already staged and waiting for its trial
     /// boot; nothing to do.
     AlreadyStaged { seq: u64, version: Version },
@@ -221,6 +225,14 @@ fn gate(manifest: &Manifest, state: &State, shell: &Version) -> Option<UpdateOut
             required: manifest.min_shell_version.clone(),
             shell: shell.clone(),
         });
+    }
+    if let Some(base) = &manifest.base_version {
+        if *shell > *base {
+            return Some(UpdateOutcome::ShellNewerThanBase {
+                base: base.clone(),
+                shell: shell.clone(),
+            });
+        }
     }
     if let Some(seq) = state.staged {
         if state

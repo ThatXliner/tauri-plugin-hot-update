@@ -58,12 +58,23 @@ impl Fixture {
     /// Sign the dist with the CLI's signing code and serve the three
     /// artifacts. Returns the manifest and the archive's server path.
     pub fn publish(&self, version: &str, min_shell: &str) -> (Manifest, String) {
+        self.publish_with_base(version, min_shell, None)
+    }
+
+    /// [`Self::publish`] with an optional manifest `baseVersion`.
+    pub fn publish_with_base(
+        &self,
+        version: &str,
+        min_shell: &str,
+        base: Option<&str>,
+    ) -> (Manifest, String) {
         let out = self.tmp.path().join(format!("release-{version}"));
         let release = sign_release(
             &SignOptions {
                 dist_dir: &self.tmp.path().join("dist"),
                 version: Version::parse(version).unwrap(),
                 min_shell_version: Version::parse(min_shell).unwrap(),
+                base_version: base.map(|b| Version::parse(b).unwrap()),
                 base_url: &self.server.url(""),
                 out_dir: &out,
             },

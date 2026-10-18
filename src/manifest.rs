@@ -30,6 +30,12 @@ pub struct Manifest {
     pub created_at: String,
     /// Minimum shell (app) version able to run this bundle.
     pub min_shell_version: Version,
+    /// Native app version the bundle was built from (the repo version at
+    /// release time). Optional: manifests without it skip the base gate, and
+    /// older shells ignore it. A shell newer than this base is refused, so an
+    /// OTA never replaces a newer native build's embedded frontend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_version: Option<Version>,
     pub archive: ArchiveInfo,
 }
 

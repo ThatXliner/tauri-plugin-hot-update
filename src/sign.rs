@@ -29,6 +29,8 @@ pub struct SignOptions<'a> {
     pub version: Version,
     /// Minimum shell (app) version able to run this bundle.
     pub min_shell_version: Version,
+    /// Native app version the bundle was built from; `None` omits the field.
+    pub base_version: Option<Version>,
     /// Public base URL the archive will be served from; the manifest's
     /// `archive.url` becomes `{base_url}/{archive file name}`.
     pub base_url: &'a str,
@@ -77,6 +79,7 @@ pub fn sign_release(
         version: options.version.clone(),
         created_at: created_at_now(),
         min_shell_version: options.min_shell_version.clone(),
+        base_version: options.base_version.clone(),
         archive: ArchiveInfo {
             url: format!("{}/{archive_name}", options.base_url.trim_end_matches('/')),
             sha256: to_hex(&Sha256::digest(&archive_bytes)),

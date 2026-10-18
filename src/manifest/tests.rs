@@ -215,3 +215,22 @@ fn nonsensical_archive_sizes_are_refused() {
         );
     }
 }
+
+#[test]
+fn base_version_is_optional_and_parsed_when_present() {
+    let kp = keypair();
+    let bytes = DESIGN_DOC_MANIFEST.as_bytes();
+    let without = verify_and_parse(bytes, &sign(&kp, bytes), &[kp.pk.to_base64()]).unwrap();
+    assert_eq!(without.base_version, None);
+    assert!(!serde_json::to_string(&without)
+        .unwrap()
+        .contains("baseVersion"));
+
+    let with = DESIGN_DOC_MANIFEST.replace(
+        "\"minShellVersion\": \"1.1.1\",",
+        "\"minShellVersion\": \"1.1.1\",\n  \"baseVersion\": \"1.1.15\",",
+    );
+    let bytes = with.as_bytes();
+    let parsed = verify_and_parse(bytes, &sign(&kp, bytes), &[kp.pk.to_base64()]).unwrap();
+    assert_eq!(parsed.base_version, Some(Version::parse("1.1.15").unwrap()));
+}

@@ -5,6 +5,14 @@ All notable changes to `tauri-plugin-hot-update` (crate) and
 packages are kept in lockstep. Format follows [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Manifest `baseVersion` (optional): the native app version a bundle was built
+  from. A shell newer than the base refuses the bundle with the new
+  `shellNewerThanBase` outcome, so an OTA never downgrades a newer native
+  build. Manifests without the field and older shells behave as before.
+- `hot-update-sign --base-version <semver>` writes the field.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

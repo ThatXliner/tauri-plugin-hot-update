@@ -6,6 +6,7 @@
 //!   --dist path/to/dist \
 //!   --version 1.2.0 \
 //!   --min-shell 1.1.0 \
+//!   --base-version 1.1.1 \
 //!   --key ~/.keys/hot-update.key \
 //!   --base-url https://cdn.example.com/ota \
 //!   --out release/
@@ -23,7 +24,7 @@ use semver::Version;
 use tauri_plugin_hot_update::sign::{sign_release, SignOptions};
 
 const USAGE: &str = "usage: hot-update-sign --dist <dir> --version <semver> \
---min-shell <semver> --key <secret-key-file> --base-url <url> --out <dir>";
+--min-shell <semver> [--base-version <semver>] --key <secret-key-file> --base-url <url> --out <dir>";
 
 fn main() -> ExitCode {
     match run() {
@@ -45,6 +46,7 @@ fn run() -> Result<(), String> {
         dist_dir: &args.dist,
         version: args.version,
         min_shell_version: args.min_shell,
+        base_version: args.base_version,
         base_url: &args.base_url,
         out_dir: &args.out,
     };
@@ -64,6 +66,7 @@ struct Args {
     dist: PathBuf,
     version: Version,
     min_shell: Version,
+    base_version: Option<Version>,
     key: PathBuf,
     base_url: String,
     out: PathBuf,
@@ -73,6 +76,7 @@ fn parse_args() -> Result<Args, String> {
     let mut dist = None;
     let mut version = None;
     let mut min_shell = None;
+    let mut base_version = None;
     let mut key = None;
     let mut base_url = None;
     let mut out = None;
@@ -89,6 +93,7 @@ fn parse_args() -> Result<Args, String> {
             "--dist" => dist = Some(PathBuf::from(value)),
             "--version" => version = Some(parse_version(&flag, &value)?),
             "--min-shell" => min_shell = Some(parse_version(&flag, &value)?),
+            "--base-version" => base_version = Some(parse_version(&flag, &value)?),
             "--key" => key = Some(PathBuf::from(value)),
             "--base-url" => base_url = Some(value),
             "--out" => out = Some(PathBuf::from(value)),
@@ -101,6 +106,7 @@ fn parse_args() -> Result<Args, String> {
         dist: dist.ok_or_else(|| missing("--dist"))?,
         version: version.ok_or_else(|| missing("--version"))?,
         min_shell: min_shell.ok_or_else(|| missing("--min-shell"))?,
+        base_version,
         key: key.ok_or_else(|| missing("--key"))?,
         base_url: base_url.ok_or_else(|| missing("--base-url"))?,
         out: out.ok_or_else(|| missing("--out"))?,
