@@ -81,7 +81,7 @@ pub use config::Config;
 pub use error::{Error, Result};
 pub use extract::ExtractError;
 pub use machine::{AckOutcome, StageError};
-pub use manifest::{ArchiveInfo, Manifest};
+pub use manifest::{ArchiveInfo, BaseVersion, Manifest};
 pub use runtime::{ApplyOutcome, BundleSource, CurrentBundle, HotUpdate};
 pub use update::{UpdateConfig, UpdateOutcome};
 

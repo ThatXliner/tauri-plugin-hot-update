@@ -551,3 +551,52 @@ async fn base_version_refusal_changes_no_state() {
         assert_eq!(state["maxVersionSeen"], "1.1.5");
     }
 }
+
+#[tokio::test]
+async fn unparseable_base_version_refuses_only_that_bundle() {
+    let fx = Fixture::new();
+    fx.publish_with_raw_base("1.1.6-ota.1", "1.1.0", serde_json::json!("1.x"));
+    let hot_update = boot(&fx.root, "1.1.5");
+    let state_before = fs::read(fx.root.join("state.json")).ok();
+
+    let expected = UpdateOutcome::InvalidBaseVersion {
+        base: "1.x".into(),
+        shell: ver("1.1.5"),
+    };
+    assert_eq!(hot_update.check(&fx.config()).await.unwrap(), expected);
+    assert_eq!(
+        hot_update
+            .check_and_download(&fx.config(), no_progress)
+            .await
+            .unwrap(),
+        expected
+    );
+    // A refusal, not a failure: no download, no state change.
+    assert_eq!(fx.server.request_count("/bundle-1.1.6-ota.1.tar.gz"), 0);
+    assert_eq!(fs::read(fx.root.join("state.json")).ok(), state_before);
+
+    // The channel is not broken: the next release with a good base stages.
+    fx.publish_with_base("1.1.6-ota.2", "1.1.0", Some("1.1.5"));
+    let outcome = hot_update
+        .check_and_download(&fx.config(), no_progress)
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::Staged { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn non_string_base_version_is_refused_as_invalid() {
+    let fx = Fixture::new();
+    fx.publish_with_raw_base("1.1.6-ota.1", "1.1.0", serde_json::json!(115));
+    let outcome = boot(&fx.root, "1.1.5").check(&fx.config()).await.unwrap();
+    assert_eq!(
+        outcome,
+        UpdateOutcome::InvalidBaseVersion {
+            base: "115".into(),
+            shell: ver("1.1.5"),
+        }
+    );
+}

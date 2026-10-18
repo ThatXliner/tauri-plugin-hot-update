@@ -30,7 +30,7 @@ use crate::download::{
     download_archive, fetch_capped, http_client, MANIFEST_MAX_BYTES, SIGNATURE_MAX_BYTES,
 };
 use crate::machine::{self, BundleMeta, State};
-use crate::manifest::{self, Manifest};
+use crate::manifest::{self, BaseVersion, Manifest};
 use crate::runtime::HotUpdate;
 use crate::{Error, Result};
 
@@ -81,6 +81,10 @@ pub enum UpdateOutcome {
     /// shell; applying it would downgrade the shell's newer embedded
     /// frontend. This install stays on its current bundle.
     ShellNewerThanBase { base: Version, shell: Version },
+    /// The manifest's `baseVersion` is not a semver, so the base gate cannot
+    /// clear the bundle. Only this bundle is refused; the manifest itself
+    /// stays valid and nothing changes on disk.
+    InvalidBaseVersion { base: String, shell: Version },
     /// Exactly this archive is already staged and waiting for its trial
     /// boot; nothing to do.
     AlreadyStaged { seq: u64, version: Version },
@@ -226,13 +230,20 @@ fn gate(manifest: &Manifest, state: &State, shell: &Version) -> Option<UpdateOut
             shell: shell.clone(),
         });
     }
-    if let Some(base) = &manifest.base_version {
-        if *shell > *base {
+    match &manifest.base_version {
+        Some(BaseVersion::Valid(base)) if *shell > *base => {
             return Some(UpdateOutcome::ShellNewerThanBase {
                 base: base.clone(),
                 shell: shell.clone(),
             });
         }
+        Some(BaseVersion::Invalid(raw)) => {
+            return Some(UpdateOutcome::InvalidBaseVersion {
+                base: raw.clone(),
+                shell: shell.clone(),
+            });
+        }
+        _ => {}
     }
     if let Some(seq) = state.staged {
         if state

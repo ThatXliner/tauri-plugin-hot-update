@@ -190,6 +190,13 @@ fn update_outcome_wire_shapes_are_pinned() {
             json!({ "status": "shellNewerThanBase", "base": "1.1.4", "shell": "1.1.5" }),
         ),
         (
+            UpdateOutcome::InvalidBaseVersion {
+                base: "1.x".into(),
+                shell: ver("1.1.5"),
+            },
+            json!({ "status": "invalidBaseVersion", "base": "1.x", "shell": "1.1.5" }),
+        ),
+        (
             UpdateOutcome::AlreadyStaged {
                 seq: 3,
                 version: ver("1.1.0"),

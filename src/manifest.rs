@@ -10,7 +10,7 @@
 
 use minisign_verify::{PublicKey, Signature};
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{Error, Result};
 
@@ -40,9 +40,65 @@ pub struct Manifest {
     /// the `1.1.23` shell refuses a bundle built from `1.1.23-beta.1`. The
     /// gate compares versions only, never build numbers: every native release
     /// must bump the app version.
+    ///
+    /// An unparseable value does not reject the manifest: it parses as
+    /// [`BaseVersion::Invalid`] and the gate refuses only this bundle
+    /// (`invalidBaseVersion`), so a bad field can never break the channel for
+    /// shells that would otherwise just skip it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_version: Option<Version>,
+    pub base_version: Option<BaseVersion>,
     pub archive: ArchiveInfo,
+}
+
+/// A manifest `baseVersion`: a semver, or the raw value when it does not
+/// parse. Serialized as a plain string either way, so the wire shape is the
+/// same as a bare `Version`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaseVersion {
+    Valid(Version),
+    /// Not a semver. Holds the raw value (a non-string JSON value is kept as
+    /// its JSON text) for the refusal status and logs.
+    Invalid(String),
+}
+
+impl BaseVersion {
+    /// Parse a raw value; never fails.
+    pub fn parse(raw: &str) -> Self {
+        match Version::parse(raw) {
+            Ok(version) => Self::Valid(version),
+            Err(_) => Self::Invalid(raw.to_string()),
+        }
+    }
+}
+
+impl From<Version> for BaseVersion {
+    fn from(version: Version) -> Self {
+        Self::Valid(version)
+    }
+}
+
+impl std::fmt::Display for BaseVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Valid(version) => version.fmt(f),
+            Self::Invalid(raw) => f.write_str(raw),
+        }
+    }
+}
+
+impl Serialize for BaseVersion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for BaseVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Ok(match serde_json::Value::deserialize(deserializer)? {
+            serde_json::Value::String(raw) => Self::parse(&raw),
+            other => Self::Invalid(other.to_string()),
+        })
+    }
 }
 
 /// Where the bundle archive lives and what it must hash to.

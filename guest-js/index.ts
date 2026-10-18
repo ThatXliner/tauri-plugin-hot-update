@@ -45,6 +45,8 @@ export interface Manifest {
  * - `shellNewerThanBase` — the bundle was built from an older native base
  *   than the installed app; applying it would downgrade the app's newer
  *   embedded frontend, so the install stays put.
+ * - `invalidBaseVersion` — the manifest's `baseVersion` is not a semver
+ *   (`base` is the raw value); this bundle is refused, the install stays put.
  * - `alreadyStaged` — exactly this archive is already waiting for its
  *   trial boot.
  */
@@ -55,6 +57,7 @@ export type UpdateOutcome =
   | { status: "blacklisted"; version: string }
   | { status: "shellTooOld"; required: string; shell: string }
   | { status: "shellNewerThanBase"; base: string; shell: string }
+  | { status: "invalidBaseVersion"; base: string; shell: string }
   | { status: "alreadyStaged"; seq: number; version: string };
 
 /** {@link check} never downloads, so it never reports `staged`. */

@@ -232,5 +232,45 @@ fn base_version_is_optional_and_parsed_when_present() {
     );
     let bytes = with.as_bytes();
     let parsed = verify_and_parse(bytes, &sign(&kp, bytes), &[kp.pk.to_base64()]).unwrap();
-    assert_eq!(parsed.base_version, Some(Version::parse("1.1.15").unwrap()));
+    assert_eq!(
+        parsed.base_version,
+        Some(BaseVersion::Valid(Version::parse("1.1.15").unwrap()))
+    );
+}
+
+#[test]
+fn unparseable_base_version_keeps_the_manifest_valid() {
+    let kp = keypair();
+    let plain = DESIGN_DOC_MANIFEST.as_bytes();
+    let baseline = verify_and_parse(plain, &sign(&kp, plain), &[kp.pk.to_base64()]).unwrap();
+    for (raw, expected) in [
+        ("\"1.x\"", "1.x"),
+        ("\"\"", ""),
+        ("\"v1.1.23\"", "v1.1.23"),
+        ("123", "123"),
+    ] {
+        let with = DESIGN_DOC_MANIFEST.replace(
+            "\"minShellVersion\": \"1.1.1\",",
+            &format!("\"minShellVersion\": \"1.1.1\",\n  \"baseVersion\": {raw},"),
+        );
+        let bytes = with.as_bytes();
+        let parsed = verify_and_parse(bytes, &sign(&kp, bytes), &[kp.pk.to_base64()])
+            .unwrap_or_else(|e| panic!("{raw}: {e}"));
+        assert_eq!(
+            parsed.base_version,
+            Some(BaseVersion::Invalid(expected.to_string())),
+            "{raw}"
+        );
+        // Every other field still parses as in the plain manifest.
+        assert_eq!(parsed.version, baseline.version);
+        assert_eq!(parsed.archive, baseline.archive);
+    }
+}
+
+#[test]
+fn base_version_serializes_as_a_plain_string() {
+    let valid = serde_json::to_value(BaseVersion::parse("1.1.15")).unwrap();
+    assert_eq!(valid, serde_json::json!("1.1.15"));
+    let invalid = serde_json::to_value(BaseVersion::parse("1.x")).unwrap();
+    assert_eq!(invalid, serde_json::json!("1.x"));
 }

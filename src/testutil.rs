@@ -93,6 +93,30 @@ impl Fixture {
         (release.manifest, archive_path)
     }
 
+    /// [`Self::publish`] with a raw `baseVersion` JSON value the signer CLI
+    /// would never write (e.g. an unparseable string): the manifest is
+    /// re-signed with the fixture key after the field is injected.
+    pub fn publish_with_raw_base(
+        &self,
+        version: &str,
+        min_shell: &str,
+        raw_base: serde_json::Value,
+    ) -> String {
+        let (_, archive_path) = self.publish_with_base(version, min_shell, None);
+        let out = self.tmp.path().join(format!("release-{version}"));
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        manifest["baseVersion"] = raw_base;
+        let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        let signature = minisign::sign(None, &self.keypair.sk, &bytes[..], None, None).unwrap();
+        self.server.set("/manifest.json", bytes);
+        self.server.set(
+            "/manifest.json.minisig",
+            signature.into_string().into_bytes(),
+        );
+        archive_path
+    }
+
     pub fn bundle_dir(&self, seq: u64) -> PathBuf {
         Store::new(self.root.clone()).bundle_dir(seq)
     }

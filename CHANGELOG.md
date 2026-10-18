@@ -12,6 +12,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   `shellNewerThanBase` outcome, so an OTA never downgrades a newer native
   build. Manifests without the field and older shells behave as before.
 - `hot-update-sign --base-version <semver>` writes the field.
+- An unparseable `baseVersion` no longer rejects the whole manifest: only
+  that bundle is refused, with the new `invalidBaseVersion` outcome
+  (`base` = raw value). `Manifest::base_version` is now
+  `Option<BaseVersion>` (`Valid(Version)` / `Invalid(String)`); the wire
+  shape is unchanged (a plain string).
 
 ## [0.2.0] - 2026-10-18
 

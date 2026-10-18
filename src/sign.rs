@@ -79,7 +79,7 @@ pub fn sign_release(
         version: options.version.clone(),
         created_at: created_at_now(),
         min_shell_version: options.min_shell_version.clone(),
-        base_version: options.base_version.clone(),
+        base_version: options.base_version.clone().map(Into::into),
         archive: ArchiveInfo {
             url: format!("{}/{archive_name}", options.base_url.trim_end_matches('/')),
             sha256: to_hex(&Sha256::digest(&archive_bytes)),
