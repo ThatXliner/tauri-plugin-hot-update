@@ -34,6 +34,12 @@ pub struct Manifest {
     /// release time). Optional: manifests without it skip the base gate, and
     /// older shells ignore it. A shell newer than this base is refused, so an
     /// OTA never replaces a newer native build's embedded frontend.
+    ///
+    /// Ordering is plain semver precedence, build metadata ignored: a
+    /// prerelease base sorts below its release (`1.1.23-beta.1 < 1.1.23`), so
+    /// the `1.1.23` shell refuses a bundle built from `1.1.23-beta.1`. The
+    /// gate compares versions only, never build numbers: every native release
+    /// must bump the app version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_version: Option<Version>,
     pub archive: ArchiveInfo,

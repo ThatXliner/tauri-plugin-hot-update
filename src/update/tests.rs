@@ -467,3 +467,87 @@ async fn manifest_without_base_version_skips_the_base_gate() {
         "{outcome:?}"
     );
 }
+
+#[tokio::test]
+async fn base_version_newer_than_an_older_shell_is_accepted() {
+    // An older installed shell (1.1.5 < base 1.1.6) takes the bundle: it is
+    // newer code than the shell's embedded frontend, which is the point of OTA.
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.7-ota.1", "1.1.0", Some("1.1.6"));
+    let outcome = boot(&fx.root, "1.1.5")
+        .check_and_download(&fx.config(), no_progress)
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::Staged { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn base_version_prerelease_orders_below_its_release() {
+    // Plain semver precedence: 1.1.23-beta.1 < 1.1.23. A bundle built from a
+    // prerelease base is refused by the 1.1.23 release shell (the release is
+    // newer), and accepted by the shell of the same prerelease.
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.24-ota.1", "1.1.0", Some("1.1.23-beta.1"));
+    let outcome = boot(&fx.root, "1.1.23").check(&fx.config()).await.unwrap();
+    assert_eq!(
+        outcome,
+        UpdateOutcome::ShellNewerThanBase {
+            base: ver("1.1.23-beta.1"),
+            shell: ver("1.1.23")
+        }
+    );
+
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.24-ota.1", "1.1.0", Some("1.1.23-beta.1"));
+    let outcome = boot(&fx.root, "1.1.23-beta.1")
+        .check(&fx.config())
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::Available { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn base_version_refusal_changes_no_state() {
+    let fx = Fixture::new();
+    fx.publish_with_base("1.1.6-ota.1", "1.1.0", Some("1.1.4"));
+    let hot_update = boot(&fx.root, "1.1.5");
+    let state_file = fx.root.join("state.json");
+    let read_state = || fs::read(&state_file).ok();
+    let list_bundles = || {
+        let mut names: Vec<_> = fs::read_dir(fx.root.join("bundles"))
+            .map(|dir| dir.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let state_before = read_state();
+    let bundles_before = list_bundles();
+
+    for _ in 0..2 {
+        let outcome = hot_update
+            .check_and_download(&fx.config(), no_progress)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, UpdateOutcome::ShellNewerThanBase { .. }),
+            "{outcome:?}"
+        );
+    }
+
+    // No watermark bump, no stage, no failed/last-good change: state.json is
+    // byte-identical. No download and nothing new under bundles/.
+    assert_eq!(read_state(), state_before);
+    assert_eq!(list_bundles(), bundles_before);
+    assert_eq!(fx.server.request_count("/bundle-1.1.6-ota.1.tar.gz"), 0);
+    if state_before.is_some() {
+        let state = fx.state();
+        assert!(state["staged"].is_null());
+        assert_eq!(state["maxVersionSeen"], "1.1.5");
+    }
+}
