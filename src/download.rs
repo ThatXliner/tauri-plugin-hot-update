@@ -136,3 +136,44 @@ pub(crate) fn to_hex(bytes: &[u8]) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod emudhra_tls_test {
+    #[tokio::test]
+    #[ignore = "requires access to public TLS test hosts"]
+    async fn rejects_compromised_emudhra_chains() {
+        let client = super::http_client().unwrap();
+        for host in [
+            "dv-g3b-emudhra.we-have-a-problem.com",
+            "dv-g3b-aaa-emudhra.we-have-a-problem.com",
+        ] {
+            let mut rejected = false;
+            for attempt in 1..=5 {
+                let result = client
+                    .get(format!("https://{host}/"))
+                    .timeout(std::time::Duration::from_secs(20))
+                    .send()
+                    .await;
+                let error = result.expect_err("compromised chain was accepted");
+                let detail = format!("{error:?}");
+                println!("{host} attempt {attempt}: {detail}");
+                if detail.contains("CertDistrusted") || detail.contains("UnknownIssuer") {
+                    rejected = true;
+                    break;
+                }
+            }
+            assert!(
+                rejected,
+                "{host}: no certificate rejection; network failures are inconclusive"
+            );
+        }
+        let response = client
+            .get("https://example.com/")
+            .timeout(std::time::Duration::from_secs(20))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        println!("example.com: {}", response.status());
+    }
+}
